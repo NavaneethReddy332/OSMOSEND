@@ -1,14 +1,13 @@
-import AWS from 'aws-sdk';
+import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
 
-const s3 = new AWS.S3({
-  accessKeyId: import.meta.env.VITE_STORJ_ACCESS_KEY,
-  secretAccessKey: import.meta.env.VITE_STORJ_SECRET_KEY,
-  endpoint: import.meta.env.VITE_STORJ_ENDPOINT,
-  s3ForcePathStyle: true,
-  signatureVersion: 'v4',
-  httpOptions: {
-    timeout: 0,
+const s3Client = new S3Client({
+  credentials: {
+    accessKeyId: import.meta.env.VITE_STORJ_ACCESS_KEY,
+    secretAccessKey: import.meta.env.VITE_STORJ_SECRET_KEY,
   },
+  endpoint: import.meta.env.VITE_STORJ_ENDPOINT,
+  region: 'us-east-1',
+  forcePathStyle: true,
 });
 
 const bucketName = import.meta.env.VITE_STORJ_BUCKET;
@@ -25,46 +24,47 @@ export const uploadFileToStorj = async (
   path: string,
   onProgress?: (progress: UploadProgress) => void
 ): Promise<string> => {
-  return new Promise((resolve, reject) => {
-    let startTime = Date.now();
-    let lastLoaded = 0;
+  const startTime = Date.now();
 
-    const params = {
-      Bucket: bucketName,
-      Key: path,
-      Body: file,
-      ContentType: file.type,
-    };
-
-    const upload = s3.upload(params);
-
-    upload.on('httpUploadProgress', (progress) => {
-      const currentTime = Date.now();
-      const timeElapsed = (currentTime - startTime) / 1000;
-      const bytesUploaded = progress.loaded - lastLoaded;
-      const speed = timeElapsed > 0 ? bytesUploaded / timeElapsed : 0;
-
-      if (onProgress) {
-        onProgress({
-          loaded: progress.loaded,
-          total: progress.total || file.size,
-          percentage: Math.round((progress.loaded / (progress.total || file.size)) * 100),
-          speed,
-        });
-      }
-
-      lastLoaded = progress.loaded;
-      startTime = currentTime;
-    });
-
-    upload.send((err, data) => {
-      if (err) {
-        reject(err);
-      } else {
-        resolve(data.Location);
-      }
-    });
+  const command = new PutObjectCommand({
+    Bucket: bucketName,
+    Key: path,
+    Body: file,
+    ContentType: file.type,
   });
+
+  try {
+    if (onProgress) {
+      const interval = setInterval(() => {
+        const elapsed = (Date.now() - startTime) / 1000;
+        const estimatedProgress = Math.min((elapsed / 10) * 100, 95);
+
+        onProgress({
+          loaded: (file.size * estimatedProgress) / 100,
+          total: file.size,
+          percentage: Math.round(estimatedProgress),
+          speed: (file.size * estimatedProgress) / 100 / elapsed,
+        });
+      }, 500);
+
+      await s3Client.send(command);
+      clearInterval(interval);
+
+      onProgress({
+        loaded: file.size,
+        total: file.size,
+        percentage: 100,
+        speed: file.size / ((Date.now() - startTime) / 1000),
+      });
+    } else {
+      await s3Client.send(command);
+    }
+
+    return generatePublicUrl(path);
+  } catch (error) {
+    console.error('Upload error:', error);
+    throw error;
+  }
 };
 
 export const generatePublicUrl = (key: string): string => {

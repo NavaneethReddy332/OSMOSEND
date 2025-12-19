@@ -21,17 +21,18 @@ export const getUserCode = async (): Promise<string> => {
   if (!userCode) {
     userCode = generateUserCode();
 
-    const { error } = await supabase
-      .from('users')
-      .insert([{ user_code: userCode }]);
+    if (supabase) {
+      const { error } = await supabase
+        .from('users')
+        .insert([{ user_code: userCode }]);
 
-    if (error) {
-      console.error('Error creating user:', error);
-      throw error;
+      if (error) {
+        console.error('Error creating user:', error);
+      }
     }
 
     localStorage.setItem(USER_CODE_KEY, userCode);
-  } else {
+  } else if (supabase) {
     await supabase
       .from('users')
       .update({ last_active: new Date().toISOString() })
@@ -42,6 +43,8 @@ export const getUserCode = async (): Promise<string> => {
 };
 
 export const getUserId = async (userCode: string): Promise<string | null> => {
+  if (!supabase) return null;
+
   const { data, error } = await supabase
     .from('users')
     .select('id')
